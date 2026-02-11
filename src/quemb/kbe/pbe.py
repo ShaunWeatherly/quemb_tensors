@@ -199,7 +199,7 @@ class BE(Mixin_k_Localize):
             self.ek = 0.0
         else:
             print("exxdiv = ", exxdiv, "not implemented!", flush=True)
-            print("Energy may diverse.", flush=True)
+            print("Proceeding with `exxdiv = None`.", flush=True)
             print(flush=True)
 
         self.frozen_core = fobj.frozen_core
@@ -285,6 +285,12 @@ class BE(Mixin_k_Localize):
 
         if not restart:
             self.initialize(compute_hf)
+
+    def rdm1_fullbasis(self,) -> None:
+        return None
+
+    def rdm2_fullbasis(self,) -> None:
+        return None
 
     @timer.timeit
     def optimize(
