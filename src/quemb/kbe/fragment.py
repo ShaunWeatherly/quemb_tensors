@@ -8,6 +8,7 @@ from pyscf.pbc.gto.cell import Cell
 from quemb.kbe.autofrag import AutogenArgs, autogen
 from quemb.kbe.pfrag import Frags
 from quemb.molbe.chemfrag import ChemGenArgs, chemgen
+from quemb.molbe.graphfrag import GraphGenArgs, graphgen
 from quemb.molbe.helper import get_core
 from quemb.shared.typing import (
     FragmentIdx,
@@ -149,7 +150,7 @@ def fragmentate(
     self_match: bool = False,
     allcen: bool = True,
     print_frags: bool = True,
-    additional_args: ChemGenArgs | AutogenArgs | None = None,
+    additional_args: ChemGenArgs | AutogenArgs | GraphGenArgs | None = None,
 ) -> FragPart:
     """Fragment/partitioning definition
 
@@ -216,8 +217,7 @@ def fragmentate(
             interlayer=additional_args.interlayer,
             print_frags=print_frags,
         )
-
-        return FragPart(
+        result = FragPart(
             unitcell=unitcell,
             mol=mol,
             frag_type=frag_type,
@@ -236,6 +236,44 @@ def fragmentate(
             iao_valence_basis=iao_valence_basis,
             kpt=kpt,
         )
+
+    elif frag_type == "graphgen":
+        if additional_args is None:
+            additional_args = GraphGenArgs()
+        else:
+            assert isinstance(additional_args, GraphGenArgs)
+        if iao_valence_basis:
+            raise ValueError("Option: `iao_valence_basis` not yet supported in 'graphgen'. Exiting.")
+        mol_fragments = graphgen(
+            mol=mol.copy(),
+            n_BE=n_BE,
+            frozen_core=frozen_core,
+            remove_nonunique_frags=additional_args.remove_nonnunique_frags,
+            frag_prefix=frag_prefix,
+            connectivity=additional_args.connectivity,
+            iao_valence_basis=iao_valence_basis,
+            cutoff=additional_args.cutoff,
+        )
+        result = FragPart(
+            unitcell=unitcell,
+            mol=mol,
+            frag_type=frag_type,
+            AO_per_frag=mol_fragments.AO_per_frag,
+            AO_per_edge_per_frag=mol_fragments.AO_per_edge_per_frag,
+            ref_frag_idx_per_edge_per_frag=mol_fragments.ref_frag_idx_per_edge_per_frag,
+            weight_and_relAO_per_center_per_frag=mol_fragments.weight_and_relAO_per_center_per_frag,
+            relAO_per_edge_per_frag=mol_fragments.relAO_per_edge_per_frag,
+            relAO_in_ref_per_edge_per_frag=mol_fragments.relAO_in_ref_per_edge_per_frag,
+            relAO_per_origin_per_frag=mol_fragments.relAO_per_origin_per_frag,
+            n_BE=mol_fragments.n_BE,
+            natom=natom,
+            frozen_core=frozen_core,
+            iao_valence_basis=iao_valence_basis,
+            kpt=kpt,
+            self_match=self_match,
+            allcen=allcen,
+        )
+
     elif frag_type == "chemgen":
         if additional_args is None:
             additional_args = ChemGenArgs()
@@ -255,7 +293,7 @@ def fragmentate(
         mol_fragments = fragments.get_FragPart(
             wrong_iao_indexing=additional_args._wrong_iao_indexing
         )
-        return FragPart(
+        result = FragPart(
             unitcell=unitcell,
             mol=mol,
             frag_type=frag_type,
@@ -276,3 +314,5 @@ def fragmentate(
         )
     else:
         raise ValueError(f"Fragmentation type = {frag_type} not implemented!")
+
+    return result
