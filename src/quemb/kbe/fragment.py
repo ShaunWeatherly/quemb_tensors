@@ -146,6 +146,7 @@ def fragmentate(
     unitcell: int = 1,
     iao_valence_basis: str | None = None,
     n_BE: int = 2,
+    frag_prefix: str = "f",
     frozen_core: bool = False,
     self_match: bool = False,
     allcen: bool = True,
@@ -174,6 +175,9 @@ def fragmentate(
     mol :
         pyscf.pbc.gto.cell.Cell object. This is required for the options, 'autogen',
         and 'chain' as frag_type.
+    frag_prefix:
+        Prefix to be appended to the fragment datanames. Useful for managing
+        fragment scratch directories.
     iao_valence_basis :
         Name of minimal basis set for IAO scheme. 'sto-3g' suffice for most cases.
     frozen_core :
@@ -243,7 +247,9 @@ def fragmentate(
         else:
             assert isinstance(additional_args, GraphGenArgs)
         if iao_valence_basis:
-            raise ValueError("Option: `iao_valence_basis` not yet supported in 'graphgen'. Exiting.")
+            raise ValueError(
+                "Option: `iao_valence_basis` not yet supported in 'graphgen'. Exiting."
+            )
         mol_fragments = graphgen(
             mol=mol.copy(),
             n_BE=n_BE,
