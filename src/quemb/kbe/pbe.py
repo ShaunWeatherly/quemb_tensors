@@ -300,14 +300,6 @@ class BE(Mixin_k_Localize):
             for k in range(nkpt):
                 # Only the center site indices are used to project RDM elements.
                 cind = [fobj.AO_in_frag[i] for i in fobj.weight_and_relAO_per_center[1]]
-                print("cind", cind)
-                print("C_mo", np.shape(C_mo[k]))
-                print("S", np.shape(self.S[k]))
-                print("W", np.shape(self.W[k]))
-                print("W[cind]", np.shape(self.W[k][:, cind]))
-                print("TA", np.shape(fobj.TA[k]))
-                print("fobj.mo_coeffs", np.shape(fobj.mo_coeffs))
-                print("fobj.rdm1__", np.shape(fobj.rdm1__))
                 # Construct the center site projector for this fragment, Pc_.
                 Pck_ = (
                     fobj.TA[k].T
@@ -330,9 +322,13 @@ class BE(Mixin_k_Localize):
             rdm1AO[k] = (rdm1AO[k] + rdm1AO[k].T) / 2.0
         # Finally, rotate into the requested basis.
         if return_basis.upper() == "MO":
-            rdm1 = self.C.T @ self.S @ rdm1AO @ self.S @ self.C
+            for k in range(nkpt):
+                rdm1AO[k] = self.C[k].T @ self.S[k] @ rdm1AO[k] @ self.S[k] @ self.C[k]
+            rdm1 = rdm1AO
         elif return_basis.upper() == "LO":
-            rdm1 = self.W.T @ self.S @ rdm1AO @ self.S @ self.W
+            for k in range(nkpt):
+                rdm1AO[k] = self.W[k].T @ self.S[k] @ rdm1AO[k] @ self.S[k] @ self.W[k]
+            rdm1 = rdm1AO
         elif return_basis.upper() == "AO":
             rdm1 = rdm1AO
         else:
