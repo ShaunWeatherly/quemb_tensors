@@ -286,10 +286,65 @@ class BE(Mixin_k_Localize):
         if not restart:
             self.initialize(compute_hf)
 
-    def rdm1_fullbasis(self,) -> None:
-        return None
+    def rdm1_fullbasis(
+        self,
+        return_basis: Literal["LO", "AO", "MO"] = "AO",
+    ) -> np.ndarray:
+        C_mo = self.C.copy()
+        nao = C_mo.shape[1]
+        nkpt = self.nkpt
+        # The 1RDM is always built in the AO basis first, followed
+        # by a rotation into the user requested `return_basis`.
+        rdm1AO = zeros((nkpt, nao, nao), dtype=np.complex128)
+        for fobj in self.Fobjs:
+            for k in range(nkpt):
+                # Only the center site indices are used to project RDM elements.
+                cind = [fobj.AO_in_frag[i] for i in fobj.weight_and_relAO_per_center[1]]
+                print("cind", cind)
+                print("C_mo", np.shape(C_mo[k]))
+                print("S", np.shape(self.S[k]))
+                print("W", np.shape(self.W[k]))
+                print("W[cind]", np.shape(self.W[k][:, cind]))
+                print("TA", np.shape(fobj.TA[k]))
+                print("fobj.mo_coeffs", np.shape(fobj.mo_coeffs))
+                print("fobj.rdm1__", np.shape(fobj.rdm1__))
+                # Construct the center site projector for this fragment, Pc_.
+                Pck_ = (
+                    fobj.TA[k].T
+                    @ self.S[k]
+                    @ self.W[k][:, cind]
+                    @ self.W[k][:, cind].T
+                    @ self.S[k]
+                    @ fobj.TA[k]
+                )
+                # Project the correlated fragment 1RDM: MO basis -> EO basis.
+                rdm1_eo = fobj.mo_coeffs @ fobj.rdm1__ @ fobj.mo_coeffs.T
+                # Apply the center site projector.
+                rdm1_center = Pck_ @ rdm1_eo
+                # Undo the embedding basis transformation.
+                rdm1_ao = fobj.TA[k] @ rdm1_center @ fobj.TA[k].T
+                # Add the
+                rdm1AO[k] += rdm1_ao
+        # Symmetrize the 1RDM at each k-point.
+        for k in range(nkpt):
+            rdm1AO[k] = (rdm1AO[k] + rdm1AO[k].T) / 2.0
+        # Finally, rotate into the requested basis.
+        if return_basis.upper() == "MO":
+            rdm1 = self.C.T @ self.S @ rdm1AO @ self.S @ self.C
+        elif return_basis.upper() == "LO":
+            rdm1 = self.W.T @ self.S @ rdm1AO @ self.S @ self.W
+        elif return_basis.upper() == "AO":
+            rdm1 = rdm1AO
+        else:
+            print(f"The specified 1RDM basis was not recognized: {return_basis}, ")
+            print("the code will fall back to `return_basis = 'AO'`...")
+            rdm1 = rdm1AO
 
-    def rdm2_fullbasis(self,) -> None:
+        return rdm1
+
+    def rdm2_fullbasis(
+        self,
+    ) -> None:
         return None
 
     @timer.timeit
