@@ -22,6 +22,18 @@ def sgeom(cell, kmesh=None):
 
 
 def get_phase(cell, kpts, kmesh):
+    """
+    Returns the phase in k-space from attributes of the unit cell.
+
+    Parameters
+    ----------
+    cell : pyscf.pbc.gto.cell.Cell
+        PySCF pbc.gto.cell.Cell object defining the unit cell and lattice vectors.
+    kmesh : list of int
+        Number of k-points in each lattice vector dimension.
+    kpts : list of list of float
+        k-points in the reciprocal space for periodic computations.
+    """
     a_vec = cell.lattice_vectors()
     Ts = cartesian_prod((arange(kmesh[0]), arange(kmesh[1]), arange(kmesh[2])))
     NRs = Ts.shape[0]
