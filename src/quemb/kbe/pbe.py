@@ -341,7 +341,9 @@ class BE(Mixin_k_Localize):
     def rdm2_fullbasis(
         self,
     ) -> None:
-        return None
+        raise NotImplementedError(
+            "k-Dependent 2RDM reconstruction is not yet supported!"
+        )
 
     @timer.timeit
     def optimize(
