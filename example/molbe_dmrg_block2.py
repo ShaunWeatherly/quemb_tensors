@@ -2,12 +2,17 @@
 # `block2` is a DMRG and sparse tensor network library developed by the
 # Garnet-Chan group at Caltech: https://block2.readthedocs.io/en/latest/index.html
 
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
-from pyscf import cc, fci, gto, scf
+from pyscf import cc, dmrgscf, fci, gto, scf
 
 from quemb.molbe import BE, fragmentate
 from quemb.molbe.solver import DMRG_ArgsUser
+
+dmrgscf.settings.BLOCKEXE = os.popen("which block2main").read().strip()
+dmrgscf.settings.MPIPREFIX = ""
 
 # We'll consider the dissociation curve for a 1D chain of 8 H-atoms:
 num_points = 3
@@ -46,8 +51,8 @@ for a in seps:
     mybe = BE(
         mf,
         fobj,
-        lo_method="PM",  # Pipek-Mezey or 'lowdin', 'IAO', 'boys', 'ER
-        pop_method="lowdin",  # or 'meta-lowdin', 'mulliken', 'iao', 'becke'
+        #        lo_method="PM",  # Pipek-Mezey or 'lowdin', 'IAO', 'boys', 'ER
+        #        pop_method="lowdin",  # or 'meta-lowdin', 'mulliken', 'iao', 'becke'
     )
 
     # Next, run BE-DMRG with default parameters and maxM=100.
