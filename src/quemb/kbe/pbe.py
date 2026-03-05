@@ -359,6 +359,7 @@ class BE(Mixin_k_Localize):
         max_iter: int = 500,
         jac_solver: Literal["HF", "MP2", "CCSD"] = "HF",
         trust_region: bool = False,
+        solver_args: UserSolverArgs | None = None,
     ) -> None:
         """BE optimization function
 
@@ -424,6 +425,7 @@ class BE(Mixin_k_Localize):
             relax_density=relax_density,
             solver=solver,
             ebe_hf=self.ebe_hf,
+            solver_args=solver_args,
         )
 
         if method == "QN":

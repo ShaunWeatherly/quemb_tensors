@@ -976,8 +976,8 @@ def solve_block2(
     mc.fcisolver.twodot_to_onedot = DMRG_args.twodot_to_onedot
     mc.fcisolver.maxIter = DMRG_args.max_iter
     mc.fcisolver.block_extra_keyword = DMRG_args.block_extra_keyword
-    mc.fcisolver.scratchDirectory = frag_scratch.path
-    mc.fcisolver.runtimeDir = frag_scratch.path
+    mc.fcisolver.scratchDirectory = str(frag_scratch.path)
+    mc.fcisolver.runtimeDir = str(frag_scratch.path)
     mc.fcisolver.memory = DMRG_args.max_mem
     os.chdir(frag_scratch)
 
