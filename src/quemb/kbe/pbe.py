@@ -34,8 +34,10 @@ with contextlib.redirect_stdout(io.StringIO()):
     # Since they don't want to reduce the printing, let's temporarily disable STDOUT
     # https://github.com/gkclab/libdmet_preview/issues/22
     from libdmet.basis_transform.eri_transform import (
-       get_emb_eri_fast_gdf, get_emb_eri_fast_fft,
+        get_emb_eri_fast_fft,
+        get_emb_eri_fast_gdf,
     )
+
 
 class BE(Mixin_k_Localize):
     """
@@ -574,7 +576,7 @@ class BE(Mixin_k_Localize):
                 eri = get_emb_eri_fast_fft(
                     self.mf.cell,
                     self.mf.with_df,
-                    C_ao_lo=fobjs_.TA, # This works only if `unit_eri=True`.
+                    C_ao_lo=fobjs_.TA,  # This works only if `unit_eri=True`.
                     t_reversal_symm=True,
                     symmetry=4,
                     unit_eri=True,
