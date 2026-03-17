@@ -33,8 +33,9 @@ from quemb.shared.typing import Matrix, PathLike
 with contextlib.redirect_stdout(io.StringIO()):
     # Since they don't want to reduce the printing, let's temporarily disable STDOUT
     # https://github.com/gkclab/libdmet_preview/issues/22
-    from libdmet.basis_transform.eri_transform import get_emb_eri_fast_gdf
-
+    from libdmet.basis_transform.eri_transform import (
+       get_emb_eri_fast_gdf, get_emb_eri_fast_fft,
+    )
 
 class BE(Mixin_k_Localize):
     """
@@ -568,7 +569,23 @@ class BE(Mixin_k_Localize):
                 self.S, self.C, self.Nocc, ncore=self.ncore
             )
 
-            if self.cderi is None:
+            if isinstance(self.mf.with_df, df.fft.FFTDF):
+                # FFTDF integrals are always computed on-the-fly.
+                eri = get_emb_eri_fast_fft(
+                    self.mf.cell,
+                    self.mf.with_df,
+                    C_ao_lo=fobjs_.TA, # This works only if `unit_eri=True`.
+                    t_reversal_symm=True,
+                    symmetry=4,
+                    unit_eri=True,
+                )[0]
+                file_eri.create_dataset(fobjs_.dname, data=eri)
+                eri = ao2mo.restore(8, eri, fobjs_.nao)
+                fobjs_.cons_fock(self.hf_veff, self.S, self.hf_dm, eri_=eri)
+
+            elif self.cderi is None:
+                # Check for existence of cholesky decomposed ERIs (cderi).
+                # (These are the result of Gaussian density fitting.)
                 if not restart:
                     eri = get_emb_eri_fast_gdf(
                         self.mf.cell,
@@ -577,7 +594,6 @@ class BE(Mixin_k_Localize):
                         symmetry=4,
                         C_ao_eo=fobjs_.TA,
                     )[0]
-
                     file_eri.create_dataset(fobjs_.dname, data=eri)
                     eri = ao2mo.restore(8, eri, fobjs_.nao)
                     fobjs_.cons_fock(self.hf_veff, self.S, self.hf_dm, eri_=eri)

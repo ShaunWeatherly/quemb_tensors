@@ -318,6 +318,7 @@ class Frags:
         fs=False,
         eri=None,
         dm0=None,
+        with_df=None,
     ):
         """
         Perform self-consistent field (SCF) calculation for the fragment.
@@ -341,8 +342,10 @@ class Frags:
         if heff is None:
             heff = self.heff
 
-        if eri is None:
+        if eri is None and with_df is None:
             eri = get_eri(self.dname, self.nao, eri_file=self.eri_file)
+        elif eri is None and with_df is not None:
+            raise NotImplementedError("On-the-fly FFTDF is not yet supported :(")
 
         if dm0 is None:
             dm0 = 2.0 * (
