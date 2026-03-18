@@ -8,6 +8,37 @@ from pyscf import scf
 from quemb.shared.helper import unused
 
 
+def set_fermi(
+    e_kn: np.ndarray,
+    n_electron: int,
+    vbmax: float = -99.0,
+    cbmin: float = 99.0,
+):
+    _cbmin = cbmin
+    _vbmax = vbmax
+    _cbm_kidx = 0
+    _vbm_kidx = 0
+    for kidx, en in enumerate(e_kn):
+        cb_k = en[n_electron // 2]
+        if cb_k < _cbmin:
+            _cbmin = cb_k
+            _cbm_kidx = kidx
+        vb_k = en[n_electron // 2 - 1]
+        if vb_k > _vbmax:
+            _vbmax = vb_k
+            _vbm_kidx = kidx
+    e_kn = [en - _vbmax for en in e_kn]
+    band_summary = {
+        "cbmin": _cbmin,
+        "cbmin_kidx": _cbm_kidx,
+        "vbmax": _vbmax,
+        "vbmax_kidx": _vbm_kidx,
+        "gap": np.abs(_cbmin - _vbmax),
+    }
+
+    return (e_kn, band_summary)
+
+
 def get_bands(
     hcore: np.ndarray,
     v_eff: np.ndarray,
@@ -54,7 +85,7 @@ def get_bands(
         eig_kpts.append(eigs)
         mo_coeff_kpts.append(C_mo)
 
-    return eig_kpts, mo_coeff_kpts
+    return (eig_kpts, mo_coeff_kpts)
 
 
 def get_veff(eri_, dm, S, TA, hf_veff, return_veff0=False):
