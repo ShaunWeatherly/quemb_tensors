@@ -87,14 +87,11 @@ class BE(Mixin_k_Localize):
             PySCF periodic mean-field object.
         fobj :
             Fragment object containing sites, centers, edges, and indices.
-        kpts :
-            k-points in the reciprocal space for periodic computation
         eri_file :
-            Path to the file storing two-electron integrals, by default 'eri_file.h5'.
+            Path to the file storing two-electron integrals (ERIs).
+            Defaults to 'eri_file.h5'.
         lo_method :
             Method for orbital localization, by default 'lowdin'.
-        iao_wannier :
-            Whether to perform Wannier localization on the IAO space, by default False.
         compute_hf :
             Whether to compute Hartree-Fock energy, by default True.
         restart :
@@ -106,6 +103,17 @@ class BE(Mixin_k_Localize):
             multi-threaded parallel computation is invoked.
         ompnum :
             Number of OpenMP threads, by default 4.
+        iao_val_core:
+            # TODO
+        exxdiv :
+            Algorithm for treating exchange divergence at the gamma point.
+        kpts :
+            k-points in the reciprocal space for periodic computation
+        cderi :
+            Path to Cholesky decomposed ERIs (i.e., density fitting tensors).
+            Defaults to None.
+        iao_wannier :
+            Whether to perform Wannier localization on the IAO space, by default False.
         thr_bath : float,
             Threshold for bath orbitals in Schmidt decomposition
         scratch_dir :
