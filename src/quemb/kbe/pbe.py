@@ -33,7 +33,10 @@ from quemb.shared.typing import Matrix, PathLike
 with contextlib.redirect_stdout(io.StringIO()):
     # Since they don't want to reduce the printing, let's temporarily disable STDOUT
     # https://github.com/gkclab/libdmet_preview/issues/22
-    from libdmet.basis_transform.eri_transform import get_emb_eri_fast_gdf
+    from libdmet.basis_transform.eri_transform import (
+        get_emb_eri_fast_fft,
+        get_emb_eri_fast_gdf,
+    )
 
 
 class BE(Mixin_k_Localize):
@@ -84,14 +87,11 @@ class BE(Mixin_k_Localize):
             PySCF periodic mean-field object.
         fobj :
             Fragment object containing sites, centers, edges, and indices.
-        kpts :
-            k-points in the reciprocal space for periodic computation
         eri_file :
-            Path to the file storing two-electron integrals, by default 'eri_file.h5'.
+            Path to the file storing two-electron integrals (ERIs).
+            Defaults to 'eri_file.h5'.
         lo_method :
             Method for orbital localization, by default 'lowdin'.
-        iao_wannier :
-            Whether to perform Wannier localization on the IAO space, by default False.
         compute_hf :
             Whether to compute Hartree-Fock energy, by default True.
         restart :
@@ -103,6 +103,17 @@ class BE(Mixin_k_Localize):
             multi-threaded parallel computation is invoked.
         ompnum :
             Number of OpenMP threads, by default 4.
+        iao_val_core:
+            # TODO
+        exxdiv :
+            Algorithm for treating exchange divergence at the gamma point.
+        kpts :
+            k-points in the reciprocal space for periodic computation
+        cderi :
+            Path to Cholesky decomposed ERIs (i.e., density fitting tensors).
+            Defaults to None.
+        iao_wannier :
+            Whether to perform Wannier localization on the IAO space, by default False.
         thr_bath : float,
             Threshold for bath orbitals in Schmidt decomposition
         scratch_dir :
@@ -150,8 +161,11 @@ class BE(Mixin_k_Localize):
         self.kpts = kpts
 
         if not restart:
+            if mf.exxdiv.lower() in ["ewald"]:
+                # We have a seperate `ewald` routine, so without this
+                # the correction would be added _twice_ (this is bad).
+                mf.exxdiv = None
             self.mo_energy = mf.mo_energy
-            mf.exxdiv = None
             self.mf = mf
             self.Nocc = mf.cell.nelectron // 2
             self.enuc = mf.energy_nuc()
@@ -293,34 +307,34 @@ class BE(Mixin_k_Localize):
         C_mo = self.C.copy()
         nao = C_mo.shape[1]
         nkpt = self.nkpt
-        # The 1RDM is always built in the AO basis first, followed
+        # The 1RDM is first built in the AO basis, followed
         # by a rotation into the user requested `return_basis`.
         rdm1AO = zeros((nkpt, nao, nao), dtype=np.complex128)
         for fobj in self.Fobjs:
             for k in range(nkpt):
-                # Only the center site indices are used to project RDM elements.
+                # We project strictly the center site indices, `cind`.
                 cind = [fobj.AO_in_frag[i] for i in fobj.weight_and_relAO_per_center[1]]
-                # Construct the center site projector for this fragment, Pc_.
+                # `cind` then defines the center site projector, `Pc_`.
                 Pck_ = (
-                    fobj.TA[k].T
+                    fobj.TA[k].conj().T
                     @ self.S[k]
                     @ self.W[k][:, cind]
-                    @ self.W[k][:, cind].T
+                    @ self.W[k][:, cind].conj().T
                     @ self.S[k]
                     @ fobj.TA[k]
                 )
-                # Project the correlated fragment 1RDM: MO basis -> EO basis.
-                rdm1_eo = fobj.mo_coeffs @ fobj.rdm1__ @ fobj.mo_coeffs.T
-                # Apply the center site projector.
+                # Rotate: fragment MO basis -> fragment EO basis,
+                rdm1_eo = fobj.mo_coeffs @ fobj.rdm1__ @ fobj.mo_coeffs.conj().T
+                # apply the center site projector,
                 rdm1_center = Pck_ @ rdm1_eo
-                # Undo the embedding basis transformation.
-                rdm1_ao = fobj.TA[k] @ rdm1_center @ fobj.TA[k].T
-                # Add the
+                # and rotate everything back into the global AO basis.
+                rdm1_ao = fobj.TA[k] @ rdm1_center @ fobj.TA[k].conj().T
+                # The full 1RDM is then just a sum of the projected components.
                 rdm1AO[k] += rdm1_ao
         # Symmetrize the 1RDM at each k-point.
         for k in range(nkpt):
-            rdm1AO[k] = (rdm1AO[k] + rdm1AO[k].T) / 2.0
-        # Finally, rotate into the requested basis.
+            rdm1AO[k] = (rdm1AO[k] + rdm1AO[k].conj().T) / 2.0
+        # Finally, rotate into the user requested basis.
         if return_basis.upper() == "MO":
             for k in range(nkpt):
                 rdm1AO[k] = self.C[k].T @ self.S[k] @ rdm1AO[k] @ self.S[k] @ self.C[k]
@@ -359,6 +373,7 @@ class BE(Mixin_k_Localize):
         max_iter: int = 500,
         jac_solver: Literal["HF", "MP2", "CCSD"] = "HF",
         trust_region: bool = False,
+        solver_args: UserSolverArgs | None = None,
     ) -> None:
         """BE optimization function
 
@@ -424,6 +439,7 @@ class BE(Mixin_k_Localize):
             relax_density=relax_density,
             solver=solver,
             ebe_hf=self.ebe_hf,
+            solver_args=solver_args,
         )
 
         if method == "QN":
@@ -566,7 +582,23 @@ class BE(Mixin_k_Localize):
                 self.S, self.C, self.Nocc, ncore=self.ncore
             )
 
-            if self.cderi is None:
+            if isinstance(self.mf.with_df, df.fft.FFTDF):
+                # FFTDF integrals are always computed on-the-fly.
+                eri = get_emb_eri_fast_fft(
+                    self.mf.cell,
+                    self.mf.with_df,
+                    C_ao_lo=fobjs_.TA,  # This works only if `unit_eri=True`.
+                    t_reversal_symm=True,
+                    symmetry=4,
+                    unit_eri=True,
+                )[0]
+                file_eri.create_dataset(fobjs_.dname, data=eri)
+                eri = ao2mo.restore(8, eri, fobjs_.nao)
+                fobjs_.cons_fock(self.hf_veff, self.S, self.hf_dm, eri_=eri)
+
+            elif self.cderi is None:
+                # Check for existence of cholesky decomposed ERIs (cderi).
+                # (These are the result of Gaussian density fitting.)
                 if not restart:
                     eri = get_emb_eri_fast_gdf(
                         self.mf.cell,
@@ -575,7 +607,6 @@ class BE(Mixin_k_Localize):
                         symmetry=4,
                         C_ao_eo=fobjs_.TA,
                     )[0]
-
                     file_eri.create_dataset(fobjs_.dname, data=eri)
                     eri = ao2mo.restore(8, eri, fobjs_.nao)
                     fobjs_.cons_fock(self.hf_veff, self.S, self.hf_dm, eri_=eri)
