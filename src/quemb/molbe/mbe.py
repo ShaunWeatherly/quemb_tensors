@@ -140,7 +140,7 @@ class BE:
         lo_method: LocMethods = "lowdin",
         iao_loc_method: IAO_LocMethods = "lowdin",
         lo_bath_post_schmidt: Literal["cholesky", "ER", "PM", "boys"] | None = None,
-        pop_method: str | None = None,
+        lo_kwargs: dict = {},
         restart: bool = False,
         restart_file: PathLike = "storebe.pk",
         nproc: int = 1,
@@ -171,9 +171,12 @@ class BE:
         lo_method_bath_post_schmidt :
             If not :python:`None`, then perform a localization of the bath orbitals
             **after** the Schmidt decomposition.
-        pop_method :
-            Method for calculating orbital population, by default 'meta-lowdin'
-            See pyscf.lo for more details and options
+        lo_kwargs :
+            Extra kwargs to be passed to the specific localization method.
+            E.g., different orbital population definitions in Pipek-Mezey can
+            be specified via:
+                lo_kwargs = {pop_method: 'meta-lowdin' | etc.},
+            See pyscf.lo for more details and options.
         restart :
             Whether to restart from a previous calculation, by default False.
         restart_file :
@@ -359,7 +362,7 @@ class BE:
                 fobj=fobj,
                 iao_loc_method=iao_loc_method,
                 iao_valence_only=fobj.iao_valence_only,
-                pop_method=pop_method,
+                lo_kwargs=lo_kwargs,
             )
 
             if fobj.iao_valence_only and lo_method == "IAO":
@@ -368,7 +371,7 @@ class BE:
                     fobj=fobj,
                     iao_loc_method=iao_loc_method,
                     iao_valence_only=False,
-                    pop_method=pop_method,
+                    lo_kwargs=lo_kwargs,
                     hstack=True,
                     save=False,
                 )
@@ -1142,7 +1145,7 @@ class BE:
             E_hf += fobjs_.ebe_hf
         self.ebe_hf = E_hf + self.enuc + self.E_core
         hf_err = self.hf_etot - self.ebe_hf
-        print(f"HF-in-HF error                 :  {hf_err:>.4e} Ha")
+        print(f"HF-in-HF error                 :  {hf_err:>.4e} Ha", flush=True)
         if abs(hf_err) > 1.0e-5:
             warn("Large HF-in-HF energy error")
 
@@ -1191,7 +1194,6 @@ class BE:
                     frag.TA[:, frag.n_f :],
                     method=self.lo_bath_post_schmidt,
                 )
-
         if not restart:
             file_eri = h5py.File(self.eri_file, "w")
             self._eri_transform(int_transform, eri_, file_eri)
@@ -1328,7 +1330,7 @@ class BE:
         fobj: FragPart,
         iao_loc_method: IAO_LocMethods = "lowdin",
         iao_valence_only: bool = False,
-        pop_method: str | None = None,
+        lo_kwargs: dict = {},
         init_guess: Matrix[np.floating] | None = None,
         hstack: bool = False,
         save: bool = True,
@@ -1440,7 +1442,7 @@ class BE:
                 self.mf.mol,
                 W_,
                 lo_method,  # type: ignore[arg-type]
-                pop_method=pop_method,
+                lo_kwargs=lo_kwargs,
                 init_guess=init_guess,
             )
 

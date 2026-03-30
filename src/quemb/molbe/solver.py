@@ -1,6 +1,7 @@
 # Author(s): Oinam Romesh Meitei, Leah Weisburn, Shaun Weatherly
 
 import os
+import shutil
 from abc import ABC
 from pathlib import Path
 from typing import Final, Literal, TypeAlias
@@ -35,7 +36,7 @@ from quemb.shared.external.ccsd_rdm import (
 )
 from quemb.shared.external.uccsd_eri import make_eris_incore
 from quemb.shared.external.unrestricted_utils import make_uhf_obj
-from quemb.shared.helper import delete_multiple_files, unused
+from quemb.shared.helper import unused
 from quemb.shared.manage_scratch import WorkDir
 from quemb.shared.typing import Matrix, Vector
 
@@ -92,7 +93,7 @@ class DMRG_ArgsUser(UserSolverArgs):
     startM: Final[int] = 25
     maxM: Final[int] = 500
     max_iter: Final[int] = 60
-    max_mem: Final[int] = 100
+    max_mem: Final[int] = 0
     max_noise: Final[float] = 1e-3
     min_tol: Final[float] = 1e-8
     twodot_to_onedot: Final[int] = (5 * max_iter) // 6
@@ -443,7 +444,6 @@ def be_func(
                         Path(f"{scratch_dir}-frag_data") / f"{fobj.dname}_iter{iter}"
                     )
                 frag_scratch = WorkDir(frag_name, cleanup_at_end=False)
-                print("Fragment Scratch Directory:", frag_scratch)
             else:
                 frag_scratch = WorkDir(scratch_dir / fobj.dname)
             ci = cornell_shci.SHCI()
@@ -461,7 +461,7 @@ def be_func(
             # We always return 1 and 2rdms, for now
             rdm1_tmp, rdm2s = ci.make_rdm12(0, nmo, nelec)
 
-        elif solver in ["block2", "DMRG", "DMRGCI", "DMRGSCF"]:
+        elif solver == "DMRG":
             assert isinstance(fobj.dname, str)
             frag_scratch = WorkDir(scratch_dir / fobj.dname)
 
@@ -481,11 +481,7 @@ def be_func(
                 raise inst
             finally:
                 if DMRG_args.force_cleanup:
-                    delete_multiple_files(
-                        frag_scratch.path.glob("F.*"),
-                        frag_scratch.path.glob("FCIDUMP*"),
-                        frag_scratch.path.glob("node*"),
-                    )
+                    shutil.rmtree(frag_scratch.path)
 
         else:
             raise ValueError("Solver not implemented")
@@ -962,6 +958,14 @@ def solve_block2(
     from pyscf import dmrgscf  # type: ignore[attr-defined]  # noqa: PLC0415
 
     orbs = mf.mo_coeff
+    if orbs.shape[1] <= 2:
+        twodot_to_onedot = 1
+    else:
+        twodot_to_onedot = DMRG_args.twodot_to_onedot
+    if DMRG_args.max_mem == 0:
+        max_mem = int(mf.max_memory / 1000)  # In GB
+    else:
+        max_mem = int(DMRG_args.max_mem)
 
     mc = mcscf.CASCI(mf, DMRG_args.norb, DMRG_args.nelec)
     mc.fcisolver = dmrgscf.DMRGCI(mf.mol)
@@ -972,14 +976,14 @@ def solve_block2(
     mc.fcisolver.scheduleNoises = DMRG_args.schedule_kwargs["scheduleNoises"]
 
     # Other DMRG parameters
-    mc.fcisolver.threads = int(os.environ.get("OMP_NUM_THREADS", "8"))
-    mc.fcisolver.twodot_to_onedot = DMRG_args.twodot_to_onedot
+    mc.fcisolver.threads = int(os.environ.get("OMP_NUM_THREADS", "4"))
+    mc.fcisolver.twodot_to_onedot = twodot_to_onedot
     mc.fcisolver.maxIter = DMRG_args.max_iter
     mc.fcisolver.block_extra_keyword = DMRG_args.block_extra_keyword
     mc.fcisolver.scratchDirectory = str(frag_scratch.path)
     mc.fcisolver.runtimeDir = str(frag_scratch.path)
-    mc.fcisolver.memory = DMRG_args.max_mem
-    os.chdir(frag_scratch)
+    mc.fcisolver.memory = max_mem
+    os.chdir(frag_scratch.path)
 
     mc.kernel(orbs)
     rdm1, rdm2 = dmrgscf.DMRGCI.make_rdm12(

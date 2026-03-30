@@ -269,7 +269,7 @@ def get_loc(
     mol: Mole,
     C: Matrix,
     method: Literal["cholesky", "ER", "PM", "boys"] = "ER",
-    pop_method: str | None = None,
+    lo_kwargs: dict = {},
     init_guess: Matrix | str | None = "atomic",
 ) -> Matrix[np.float64]:
     """Import, initialize, and call localization procedure `method` for C
@@ -287,10 +287,12 @@ def get_loc(
         PIPEK-MIZEY, PM;
         FOSTER-BOYS, boys;
         cholesky;
-    pop_method:
-        Method for calculating orbital population, by default 'meta-lowdin'
-        See pyscf.lo for more details and options. This is only used for
-        Pipek-Mezey localization
+    lo_kwargs:
+        Extra kwargs to be passed to the specific localization method.
+        E.g., different orbital population definitions in Pipek-Mezey can
+        be specified via:
+            method_kwargs = {pop_method: 'meta-lowdin' | etc.},
+        See pyscf.lo for more details and options.
     init_guess:
         Initial guess for localization optimization.
         Default is `atomic`, See pyscf.lo for more details and options
@@ -315,9 +317,9 @@ def get_loc(
         assert_never(method)
 
     mlo = Localizer(mol, C)
-    if pop_method is not None:
-        assert isinstance(Localizer, PipekMezey)
-        mlo.pop_method = pop_method
-
     mlo.init_guess = init_guess
+    for key, attr in lo_kwargs.items():
+        setattr(mlo, key, attr)
+
+    print("Beginning localization...")
     return mlo.kernel()
