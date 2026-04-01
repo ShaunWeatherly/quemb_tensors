@@ -21,7 +21,7 @@ from numpy.linalg import multi_dot
 from scipy.linalg import svd
 
 from quemb.kbe.helper import get_veff
-from quemb.kbe.misc import get_phase, get_phase1
+from quemb.kbe.misc import get_phase
 from quemb.kbe.solver import schmidt_decomp_svd
 from quemb.molbe.helper import get_eri, get_scfObj
 from quemb.shared.helper import unused
@@ -149,6 +149,7 @@ class Frags:
         cell=None,
         kpts=None,
         kmesh=None,
+        wrap_around=False,
         h1=None,
     ) -> None:
         """
@@ -174,7 +175,7 @@ class Frags:
         for k in range(nk):
             rdm1_lo_k[k] += lmo[k][:, :nocc] @ lmo[k][:, :nocc].conj().T
         self.rdm1_lo_k = rdm1_lo_k
-        phase = get_phase(cell, kpts, kmesh)
+        phase = get_phase(cell, kpts, kmesh, wrap_around)
         supcell_rdm = einsum("Rk,kuv,Sk->RuSv", phase, rdm1_lo_k, phase.conj())
         supcell_rdm = supcell_rdm.reshape(nk * nlo, nk * nlo)
 
@@ -189,7 +190,7 @@ class Frags:
         teo = TA_R.shape[-1]
         TA_R = TA_R.reshape(nk, nlo, teo)
 
-        phase1 = get_phase1(cell, kpts, kmesh)
+        phase1 = np.sqrt(phase.shape[0]) * phase.conj()
         TA_k = einsum("Rim, Rk -> kim", TA_R, phase1)
         self.TA_lo_eo = TA_k
 
