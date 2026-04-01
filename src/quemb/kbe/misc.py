@@ -21,7 +21,7 @@ def sgeom(cell, kmesh=None):
     return tools.super_cell(cell, kmesh)
 
 
-def get_phase(cell, kpts, kmesh):
+def get_phase(cell, kpts, kmesh, wrap_around=False):
     """
     Returns the phase in k-space from attributes of the unit cell.
 
@@ -35,7 +35,14 @@ def get_phase(cell, kpts, kmesh):
         k-points in the reciprocal space for periodic computations.
     """
     a_vec = cell.lattice_vectors()
-    Ts = cartesian_prod((arange(kmesh[0]), arange(kmesh[1]), arange(kmesh[2])))
+    R_rel_a = arange(kmesh[0])
+    R_rel_b = arange(kmesh[1])
+    R_rel_c = arange(kmesh[2])
+    if wrap_around:
+        R_rel_a[(kmesh[0] + 1) // 2 :] -= kmesh[0]
+        R_rel_b[(kmesh[1] + 1) // 2 :] -= kmesh[1]
+        R_rel_c[(kmesh[2] + 1) // 2 :] -= kmesh[2]
+    Ts = cartesian_prod((R_rel_a, R_rel_b, R_rel_c))
     NRs = Ts.shape[0]
     return 1 / sqrt(NRs) * exp(1j * (Ts @ a_vec @ kpts.T))
 
