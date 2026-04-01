@@ -73,6 +73,7 @@ class BE(Mixin_k_Localize):
         iao_val_core: bool = True,
         exxdiv: str | None = "ewald",
         kpts: list[list[float]] | None = None,
+        wrap_around: bool = False,
         cderi: PathLike | None = None,
         iao_wannier: bool = False,
         thr_bath: float = 1.0e-10,
@@ -159,6 +160,7 @@ class BE(Mixin_k_Localize):
                 nkpts_ *= i
         self.nkpt = nkpts_
         self.kpts = kpts
+        self.wrap_around = wrap_around
 
         if not restart:
             if mf.exxdiv.lower() in ["ewald"]:
@@ -311,6 +313,8 @@ class BE(Mixin_k_Localize):
         # by a rotation into the user requested `return_basis`.
         rdm1AO = zeros((nkpt, nao, nao), dtype=np.complex128)
         for fobj in self.Fobjs:
+            # Rotate: fragment MO basis -> fragment EO basis,
+            rdm1_eo = fobj.mo_coeffs @ fobj.rdm1__ @ fobj.mo_coeffs.conj().T
             for k in range(nkpt):
                 # We project strictly the center site indices, `cind`.
                 cind = [fobj.AO_in_frag[i] for i in fobj.weight_and_relAO_per_center[1]]
@@ -323,17 +327,17 @@ class BE(Mixin_k_Localize):
                     @ self.S[k]
                     @ fobj.TA[k]
                 )
-                # Rotate: fragment MO basis -> fragment EO basis,
-                rdm1_eo = fobj.mo_coeffs @ fobj.rdm1__ @ fobj.mo_coeffs.conj().T
                 # apply the center site projector,
                 rdm1_center = Pck_ @ rdm1_eo
                 # and rotate everything back into the global AO basis.
                 rdm1_ao = fobj.TA[k] @ rdm1_center @ fobj.TA[k].conj().T
                 # The full 1RDM is then just a sum of the projected components.
                 rdm1AO[k] += rdm1_ao
-        # Symmetrize the 1RDM at each k-point.
         for k in range(nkpt):
+            # Symmetrize the 1RDM at each k-point.
             rdm1AO[k] = (rdm1AO[k] + rdm1AO[k].conj().T) / 2.0
+            # Normalize wrt electron count.
+            rdm1AO[k] = 2.0 * self.Nocc * rdm1AO[k] / np.trace(rdm1AO[k] @ self.S[k])
         # Finally, rotate into the user requested basis.
         if return_basis.upper() == "MO":
             for k in range(nkpt):
@@ -572,6 +576,7 @@ class BE(Mixin_k_Localize):
                 kmesh=self.fobj.kpt,
                 cell=self.fobj.mol,
                 kpts=self.kpts,
+                wrap_around=self.wrap_around,
                 h1=self.hcore,
                 thr_bath=self.thr_bath,
             )
