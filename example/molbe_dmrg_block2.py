@@ -9,10 +9,12 @@ import numpy as np
 from pyscf import cc, dmrgscf, fci, gto, scf
 
 from quemb.molbe import BE, fragmentate
+from quemb.molbe.chemfrag import ChemGenArgs
 from quemb.molbe.solver import DMRG_ArgsUser
 
 dmrgscf.settings.BLOCKEXE = os.popen("which block2main").read().strip()
-dmrgscf.settings.MPIPREFIX = ""
+dmrgscf.settings.BLOCKEXE_COMPRESS_NEVPT = os.popen("which block2main").read().strip()
+dmrgscf.settings.MPIPREFIX = "srun"
 
 # We'll consider the dissociation curve for a 1D chain of 8 H-atoms:
 num_points = 3
@@ -47,14 +49,23 @@ for a in seps:
     # any clear advantage to using any one scheme over another,
     # the Pipek-Mezey scheme continues to be the most popular. With
     # BE-DMRG, localization takes place prior to fragmentation:
-    fobj = fragmentate(n_BE=1, mol=mol)
+    fobj = fragmentate(
+        n_BE=2,
+        mol=mol,
+        frozen_core=False,
+        frag_type="chemgen",
+        additional_args=ChemGenArgs(h_treatment="treat_H_like_heavy_atom"),
+    )
+    print("Fragmentation complete...")
     mybe = BE(
         mf,
         fobj,
-        #        lo_method="PM",  # Pipek-Mezey or 'lowdin', 'IAO', 'boys', 'ER
-        #        pop_method="lowdin",  # or 'meta-lowdin', 'mulliken', 'iao', 'becke'
+        lo_method="PM",  # Pipek-Mezey or 'lowdin', 'IAO', 'boys', 'ER
+        lo_kwargs={
+            "verbose": 4,
+            "pop_method": "meta-lowdin",
+        },  # or 'meta-lowdin', 'mulliken', 'iao', 'becke'
     )
-
     # Next, run BE-DMRG with default parameters and maxM=100.
     mybe.oneshot(
         solver="DMRG",  # or 'block2', 'DMRGSCF', 'DMRGCI'
@@ -63,7 +74,6 @@ for a in seps:
             force_cleanup=True,  # Remove all fragment DMRG tmpfiles
         ),
     )
-
     bedmrg_ecorr.append(mybe.ebe_tot - mf.e_tot)
     # Setting `force_cleanup=True` will clean the scratch directory after each
     # fragment DMRG calculation finishes. DMRG tempfiles can be quite large, so
