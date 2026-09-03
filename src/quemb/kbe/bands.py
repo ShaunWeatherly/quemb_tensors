@@ -1432,7 +1432,7 @@ class HOEPOptimizer:
             E = np.zeros((self.r, self.r), dtype=np.complex128)
             E[i, j] = 1.0
             dU = sector_tangent_from_delta(E, np.zeros_like(E))
-            dgamma = self.density_response_for_matrix_perturbation(spec, dU, beta=beta)
+            dgamma = self.density_response_for_matrix_perturbation(spec, dU)
             g = directional_cost(dgamma)
 
             # Penalty derivatives
@@ -1442,7 +1442,7 @@ class HOEPOptimizer:
             Ei = np.zeros((self.r, self.r), dtype=np.complex128)
             Ei[i, j] = 1.0j
             dU = sector_tangent_from_delta(Ei, np.zeros_like(E))
-            dgamma = self.density_response_for_matrix_perturbation(spec, dU, beta=beta)
+            dgamma = self.density_response_for_matrix_perturbation(spec, dU)
             g = directional_cost(dgamma)
             g += self.penalty_directional_derivative(out, dU)
             grad[m + idx] = g
@@ -1455,7 +1455,7 @@ class HOEPOptimizer:
             E = np.zeros((self.r, self.r), dtype=np.complex128)
             E[i, j] = 1.0
             dU = sector_tangent_from_delta(np.zeros_like(E), E)
-            dgamma = self.density_response_for_matrix_perturbation(spec, dU, beta=beta)
+            dgamma = self.density_response_for_matrix_perturbation(spec, dU)
             g = directional_cost(dgamma)
             g += self.penalty_directional_derivative(out, dU)
             grad[offset + idx] = g
@@ -1463,7 +1463,7 @@ class HOEPOptimizer:
             Ei = np.zeros((self.r, self.r), dtype=np.complex128)
             Ei[i, j] = 1.0j
             dU = sector_tangent_from_delta(np.zeros_like(E), Ei)
-            dgamma = self.density_response_for_matrix_perturbation(spec, dU, beta=beta)
+            dgamma = self.density_response_for_matrix_perturbation(spec, dU)
             g = directional_cost(dgamma)
             g += self.penalty_directional_derivative(out, dU)
             grad[offset + m + idx] = g
@@ -1516,9 +1516,9 @@ class HOEPOptimizer:
         p = self.penalties
         spec = out["spec"]
         # mu = spec["mu"]
-        beta = out["beta"]
+        # beta = out["beta"]
 
-        dgamma = self.density_response_for_matrix_perturbation(spec, dU, beta=beta)
+        dgamma = self.density_response_for_matrix_perturbation(spec, dU)
 
         if p.particle_number_on:
             n_eff = np.real(np.trace(out["gamma"] @ self.s))
@@ -1658,7 +1658,6 @@ class HOEPOptimizer:
         anneal_bound: float | None = None,
         seed: int = 123,
     ):
-
         if opt_method == 0:
             opt_function = self.alternating_optimize
         elif opt_method == 1:
@@ -1810,5 +1809,5 @@ class HOEPOptimizer:
         print(
             f"Annealing Iter. {self.global_iter}: e_val={f:0.3E} (Context: {context})"
         )
-        print(f" -x_val: {x:0.3E}")
+        print(f" -x_val: {x}")
         self.global_iter += 1
