@@ -15,19 +15,22 @@ from numpy import (
     diag,
     diag_indices,
     einsum,
+    eye,
+    float64,
     floating,
     mean,
     ndarray,
     zeros_like,
 )
-from numpy.linalg import multi_dot
-from pyscf import ao2mo, cc, fci, mcscf, mp
+from numpy.linalg import multi_dot, norm
+from pyscf import ao2mo, cc, fci, mcscf, mp, scf
 from pyscf.cc.ccsd_rdm import make_rdm2
 from pyscf.mp.mp2 import MP2
 from pyscf.scf.hf import RHF
 
+from quemb.kbe.bands import HOEPOptimizer, PenaltyConfig
 from quemb.kbe.pfrag import Frags as pFrags
-from quemb.molbe.helper import get_frag_energy, get_frag_energy_u
+from quemb.molbe.helper import get_eri, get_frag_energy, get_frag_energy_u
 from quemb.molbe.pfrag import Frags
 from quemb.shared.external.ccsd_rdm import (
     make_rdm1_uccsd,
@@ -251,6 +254,7 @@ def be_func(
     solver_args: UserSolverArgs | None,
     scratch_dir: WorkDir,
     only_chem: bool = False,
+    optimize_lcp: bool = False,
     eeval: bool = False,
     relax_density: bool = False,
     return_vec: bool = False,
@@ -339,8 +343,9 @@ def be_func(
 
         elif solver == "FCI":
             mc = fci.FCI(fobj._mf, fobj._mf.mo_coeff)
-            _, civec = mc.kernel()
+            e_ci, civec = mc.kernel()
             rdm1_tmp = mc.make_rdm1(civec, mc.norb, mc.nelec)
+            e_elec_tmp = e_ci
 
         elif solver == "HCI":  # TODO
             # pylint: disable-next=E0611
@@ -470,13 +475,14 @@ def be_func(
 
             assert fobj.nsocc is not None
             try:
-                rdm1_tmp, rdm2s = solve_block2(
+                rdm1_tmp, rdm2s, e_ci = solve_block2(
                     fobj._mf,
                     fobj.nsocc,
                     frag_scratch=frag_scratch,
                     DMRG_args=DMRG_args,
                     use_cumulant=use_cumulant,
                 )
+                e_elec_tmp = e_ci
             except Exception as inst:
                 raise inst
             finally:
@@ -486,9 +492,13 @@ def be_func(
         else:
             raise ValueError("Solver not implemented")
 
+        # This is the raw, correlated electronic energy
+        # within the embedding space.
+        fobj.e_elec = e_elec_tmp
+        # 1RDM in the basis of the fragment solver.
         fobj.rdm1__ = rdm1_tmp.copy()
-
         assert fobj.mo_coeffs is not None
+        # 1RDM in the fragment EO basis.
         fobj._rdm1 = (
             multi_dot(
                 (
@@ -547,7 +557,9 @@ def be_func(
     if eeval and not return_vec:
         return (Ecorr, total_e)
 
-    ernorm, ervec = solve_error(Fobjs, Nocc, only_chem=only_chem)
+    ernorm, ervec = solve_error(
+        Fobjs, Nocc, only_chem=only_chem, optimize_lcp=optimize_lcp
+    )
 
     if eeval:
         return (ernorm, ervec, [Ecorr, total_e])
@@ -676,7 +688,7 @@ def be_func_u(
     return (E, total_e)
 
 
-def solve_error(Fobjs, Nocc, only_chem=False):
+def solve_error(Fobjs, Nocc, only_chem=False, optimize_lcp=False):
     """
     Compute the error for self-consistent fragment density matrix matching.
 
@@ -700,9 +712,11 @@ def solve_error(Fobjs, Nocc, only_chem=False):
     """
 
     err_edge = []
+    err_cen = []
     err_chempot = 0.0
 
-    if only_chem:
+    if only_chem and not optimize_lcp:
+        # Optimize just the scalar *chemical potential*.
         for fobj in Fobjs:
             # Compute chemical potential error for each fragment
             for i in fobj.weight_and_relAO_per_center[1]:
@@ -712,49 +726,170 @@ def solve_error(Fobjs, Nocc, only_chem=False):
 
         return abs(err), asarray([err])
 
-    # Compute edge and chemical potential errors
-    for fobj in Fobjs:
-        # match rdm-edge
-        for edge in fobj.relAO_per_edge:
-            for j_ in range(len(edge)):
-                for k_ in range(len(edge)):
-                    if j_ > k_:
-                        continue
-                    err_edge.append(fobj._rdm1[edge[j_], edge[k_]])
-        # chem potential
-        for i in fobj.weight_and_relAO_per_center[1]:
-            err_chempot += fobj._rdm1[i, i]
+    elif optimize_lcp:
+        # Costruct an optimal correlation potential per fragment.
+        # If `only_chem == False`, constraints are applied to
+        # *both* the correlation pot. and chemical pot.
+        # NOTE: This takes the place of density matching constraints.
 
-    err_chempot /= Fobjs[0].unitcell_nkpt
-    err_edge.append(err_chempot)  # far-end edges are included as err_chempot
+        for fobj in Fobjs:
+            # For each fragment, optimize the local correlation potential.
+            nsocc = fobj.nsocc
+            nao = fobj.h1.shape[0]
+            # (Assuming orthonormal basis.)
+            S = eye(nao)
+            # X = eye(nao)
+            # F = X.T.conj() @ (fobj.fock @ X)
+            # _, vecs = eigh(F, UPLO="U")
 
-    # Compute center errors
-    err_cen = []
-    for findx, fobj in enumerate(Fobjs):
-        # Match RDM for centers
-        for cindx, cens in enumerate(fobj.relAO_in_ref_per_edge):
-            lenc = len(cens)
-            for j_ in range(lenc):
-                for k_ in range(lenc):
-                    if j_ > k_:
-                        continue
-                    err_cen.append(
-                        Fobjs[fobj.ref_frag_idx_per_edge[cindx]]._rdm1[
-                            cens[j_], cens[k_]
-                        ]
-                    )
+            # Construct the correlated part of the fragment 1RDM:
+            d_rdm1 = fobj._rdm1.copy() - (
+                fobj._mo_coeffs[:, :nsocc] @ fobj._mo_coeffs[:, :nsocc].conj().T
+            )
+            gamma_target = fobj._rdm1.copy()
+            print("|| delta RDM1 ||: ", norm(d_rdm1))
+            # Construct the initial guess for u_corr:
+            eri_ = get_eri(fobj.dname, fobj.nao, eri_file=fobj.eri_file)
+            eri_ = asarray(eri_, dtype=float64)
+            vj, vk = scf.hf.dot_eri_dm(eri_, d_rdm1, hermi=1, with_j=True, with_k=True)
+            i_u_corr_ = vj - 0.5 * vk
 
-    err_cen.append(Nocc)
-    err_edge = array(err_edge)
-    err_cen = array(err_cen)
+            penalties = PenaltyConfig(
+                particle_number_on=True,
+                commuting_on=False,
+                noncommuting_on=True,
+                particle_number_lambda=1.0,
+                parity_on=False,  # placeholder
+                time_reversal_on=False,  # placeholder
+                # antihermitian_l2_lambda=0.0,
+                total_l2_lambda=1.0,
+                fixed_chem_pot=True,
+            )
+            opt = HOEPOptimizer(
+                fock0=fobj.h1 + fobj.veff + i_u_corr_,
+                overlap=S,
+                gamma_target=gamma_target,
+                rank=6,
+                penalties=penalties,
+                working_basis="AO",
+                default_bound=1.0,
+                default_beta=10.0,
+                verbose=True,
+            )
+            # init = opt.current_state()
+            opt.alternating_optimize(
+                jac_method="analytic",  # 3-point",
+                cycles=2,
+                maxiter_H=100,
+                maxiter_AH=100,
+                anneal_bound=1.0,
+                seed=11,
+            )
+            final = opt.current_state()
+            fobj.opt_u_corr = final["u_total"]
+            print("\nFinal cost:", final["cost"])
+            print("Final beta:", final["beta"])
+            print("Final mu:", final["mu"])
+            print("target", gamma_target)
+            print("final", final["gamma"])
+            if not only_chem:
+                # Match correlation potential edges to center.
+                # First, collect u_corr elements corresponding to edges:
+                for edge in fobj.relAO_per_edge:
+                    for j in range(0, len(edge)):
+                        for k in range(0, len(edge)):
+                            if j > k:
+                                continue
+                            err_edge.append(fobj.opt_u_corr[edge[j], edge[k]])
+                # ...along with diagonal RDM elements (for chem pot optimization):
+                for i in fobj.weight_and_relAO_per_center[1]:
+                    err_chempot += fobj._rdm1[i, i]
+                # Then collect the center sites corresponding to those edges:
+                for cindx, cens in enumerate(fobj.relAO_in_ref_per_edge):
+                    for j in range(len(cens)):
+                        for k in range(len(cens)):
+                            if j > k:
+                                continue
+                            # Not all fragments have an `opt_u_corr` in early sweeps.
+                            if (
+                                Fobjs[fobj.ref_frag_idx_per_edge[cindx]].opt_u_corr
+                                is None
+                            ):
+                                err_cen.append(None)
+                            else:
+                                err_cen.append(
+                                    Fobjs[fobj.ref_frag_idx_per_edge[cindx]].opt_u_corr[
+                                        cens[j], cens[k]
+                                    ]
+                                )
+            else:
+                # Only optimize the chemical potential.
+                for i in fobj.weight_and_relAO_per_center[1]:
+                    err_chempot += fobj._rdm1[i, i]
+        # Normalize by the number of kpts.
+        err_chempot /= Fobjs[0].unitcell_nkpt
+        # Tack on the chemical potential conditions.
+        err_edge.append(err_chempot)
+        err_cen.append(Nocc)
+        # Mask 'None' and cast to arrays.
+        for idx, i in enumerate(err_cen):
+            if i is None:
+                err_cen[idx] = err_edge[idx].copy()
+        err_edge = array(err_edge)
+        err_cen = array(err_cen)
+        # The final error vector is then just the difference:
+        err_vec = err_edge - err_cen
+        norm_ = mean(err_vec * err_vec) ** 0.5
+        print("err_vec: ", err_vec)
+        print("|| err_vec ||: ", norm_)
+        print("dim(err_vec): ", asarray(err_vec).shape)
+        return norm_, err_vec.real
 
-    # Compute the error vector
-    err_vec = err_edge - err_cen
+    elif not only_chem:
+        # Optimize both the *density matching potential*
+        # and the *chemical potential*. This is the BE
+        # matching condition as conventionally defined.
+        for fobj in Fobjs:
+            # match rdm-edge
+            for edge in fobj.relAO_per_edge:
+                for j_ in range(len(edge)):
+                    for k_ in range(len(edge)):
+                        if j_ > k_:
+                            continue
+                        err_edge.append(fobj._rdm1[edge[j_], edge[k_]])
+            # chem potential
+            for i in fobj.weight_and_relAO_per_center[1]:
+                err_chempot += fobj._rdm1[i, i]
 
-    # Compute the norm of the error vector
-    norm_ = mean(err_vec * err_vec) ** 0.5
+        err_chempot /= Fobjs[0].unitcell_nkpt
+        err_edge.append(err_chempot)  # far-end edges are included as err_chempot
 
-    return norm_, err_vec
+        # Compute center errors
+        for findx, fobj in enumerate(Fobjs):
+            # Match RDM for centers
+            for cindx, cens in enumerate(fobj.relAO_in_ref_per_edge):
+                lenc = len(cens)
+                for j_ in range(lenc):
+                    for k_ in range(lenc):
+                        if j_ > k_:
+                            continue
+                        err_cen.append(
+                            Fobjs[fobj.ref_frag_idx_per_edge[cindx]]._rdm1[
+                                cens[j_], cens[k_]
+                            ]
+                        )
+
+        err_cen.append(Nocc)
+        err_edge = array(err_edge)
+        err_cen = array(err_cen)
+
+        # Compute the error vector
+        err_vec = err_edge - err_cen
+
+        # Compute the norm of the error vector
+        norm_ = mean(err_vec * err_vec) ** 0.5
+
+        return norm_, err_vec
 
 
 def solve_mp2(
@@ -985,7 +1120,7 @@ def solve_block2(
     mc.fcisolver.memory = max_mem
     os.chdir(frag_scratch.path)
 
-    mc.kernel(orbs)
+    e_ci = mc.kernel(orbs)
     rdm1, rdm2 = dmrgscf.DMRGCI.make_rdm12(
         mc.fcisolver, DMRG_args.root, DMRG_args.norb, DMRG_args.nelec
     )
@@ -1010,7 +1145,7 @@ def solve_block2(
 
         rdm2 -= nc
 
-    return rdm1, rdm2
+    return rdm1, rdm2, e_ci
 
 
 def solve_uccsd(

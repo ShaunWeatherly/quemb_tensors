@@ -305,16 +305,35 @@ class BE(Mixin_k_Localize):
     def rdm1_fullbasis(
         self,
         return_basis: Literal["LO", "AO", "MO"] = "AO",
+        return_opt_u_corr: bool = False,
+        symmetrize: bool = True,
+        normalize: bool = True,
     ) -> np.ndarray:
         C_mo = self.C.copy()
+        hf_dm = self.hf_dm.copy()
         nao = C_mo.shape[1]
         nkpt = self.nkpt
-        # The 1RDM is first built in the AO basis, followed
+        # Full system 1RDMs are built in the AO basis first, followed
         # by a rotation into the user requested `return_basis`.
         rdm1AO = zeros((nkpt, nao, nao), dtype=np.complex128)
+        if return_opt_u_corr:
+            u_corrAO = zeros((nkpt, nao, nao), dtype=np.complex128)
         for fobj in self.Fobjs:
+            # nsocc = fobj.nsocc
+            nao = fobj.h1.shape[0]
             # Rotate: fragment MO basis -> fragment EO basis,
-            rdm1_eo = fobj.mo_coeffs @ fobj.rdm1__ @ fobj.mo_coeffs.conj().T
+            _rdm1 = fobj.rdm1__.copy()
+            eo_rdm1 = fobj.mo_coeffs @ _rdm1 @ fobj.mo_coeffs.conj().T
+            if return_opt_u_corr:
+                if fobj.opt_u_corr is not None:
+                    _u_corr = fobj.opt_u_corr.copy()
+                else:
+                    raise AttributeError(
+                        "Cannot construct global correlation potential when",
+                        "`fobj.opt_u_corr` is None...",
+                        "Consider rerunning `BE.optimize()` with `optimize_lcp=True`!",
+                    )
+                eo_u_corr = fobj.mo_coeffs @ _u_corr @ fobj.mo_coeffs.conj().T
             for k in range(nkpt):
                 # We project strictly the center site indices, `cind`.
                 cind = [fobj.AO_in_frag[i] for i in fobj.weight_and_relAO_per_center[1]]
@@ -328,16 +347,30 @@ class BE(Mixin_k_Localize):
                     @ fobj.TA[k]
                 )
                 # apply the center site projector,
-                rdm1_center = Pck_ @ rdm1_eo
+                c_rdm1 = Pck_ @ eo_rdm1
                 # and rotate everything back into the global AO basis.
-                rdm1_ao = fobj.TA[k] @ rdm1_center @ fobj.TA[k].conj().T
+                aoc_rdm1 = fobj.TA[k] @ c_rdm1 @ fobj.TA[k].conj().T
                 # The full 1RDM is then just a sum of the projected components.
-                rdm1AO[k] += rdm1_ao
+                rdm1AO[k] += aoc_rdm1
+
+                if return_opt_u_corr:
+                    c_u_corr = Pck_ @ eo_u_corr
+                    aoc_u_corr = fobj.TA[k] @ c_u_corr @ fobj.TA[k].conj().T
+                    u_corrAO[k] += aoc_u_corr
+
         for k in range(nkpt):
-            # Symmetrize the 1RDM at each k-point.
-            rdm1AO[k] = (rdm1AO[k] + rdm1AO[k].conj().T) / 2.0
-            # Normalize wrt electron count.
-            rdm1AO[k] = 2.0 * self.Nocc * rdm1AO[k] / np.trace(rdm1AO[k] @ self.S[k])
+            if symmetrize:
+                # Symmetrize the 1RDM at each k-point.
+                rdm1AO[k] = (rdm1AO[k] + rdm1AO[k].conj().T) / 2.0
+                if return_opt_u_corr:
+                    u_corrAO[k] = (u_corrAO[k] + u_corrAO[k].conj().T) / 2.0
+            if normalize:
+                # Normalize wrt reference 1RDM.
+                _norm = np.trace(hf_dm[k] @ self.S[k]) / np.trace(rdm1AO[k] @ self.S[k])
+                rdm1AO[k] = rdm1AO[k] * _norm
+                if return_opt_u_corr:
+                    u_corrAO[k] = (1 / nkpt) * u_corrAO[k] * _norm
+
         # Finally, rotate into the user requested basis.
         if return_basis.upper() == "MO":
             for k in range(nkpt):
@@ -353,8 +386,10 @@ class BE(Mixin_k_Localize):
             print(f"The specified 1RDM basis was not recognized: {return_basis}, ")
             print("the code will fall back to `return_basis = 'AO'`...")
             rdm1 = rdm1AO
-
-        return rdm1
+        if return_opt_u_corr:
+            return rdm1, u_corrAO
+        else:
+            return rdm1
 
     def rdm2_fullbasis(
         self,
@@ -369,6 +404,7 @@ class BE(Mixin_k_Localize):
         solver: Solvers = "CCSD",
         method: str = "QN",
         only_chem: bool = False,
+        optimize_lcp: bool = False,
         use_cumulant: bool = True,
         conv_tol: float = 1.0e-6,
         relax_density: bool = False,
@@ -439,6 +475,7 @@ class BE(Mixin_k_Localize):
             max_space=max_iter,
             conv_tol=conv_tol,
             only_chem=only_chem,
+            optimize_lcp=optimize_lcp,
             use_cumulant=use_cumulant,
             relax_density=relax_density,
             solver=solver,
@@ -839,6 +876,9 @@ class BE(Mixin_k_Localize):
             for fobj in self.Fobjs:
                 print(fobj.heff.shape, fobj.dname, flush=True)
                 filepot.create_dataset(fobj.dname, data=fobj.heff)
+
+    def get_bands(self):
+        return None
 
     def read_heff(self, heff_file="bepotfile.h5"):
         """

@@ -122,6 +122,11 @@ class Frags:
         self.heff: Matrix[float64]
         self.udim: int
 
+        # Correlation Potentials
+        self.opt_u_corr = None
+        self.opt_u_corr_conv = False
+        self.e_elec = 0.0
+
         self._rdm1 = None
         self.rdm1__ = None
         self.rdm2__ = None

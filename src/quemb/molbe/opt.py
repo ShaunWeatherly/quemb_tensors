@@ -73,6 +73,7 @@ class BEOPT:
     nproc: int = 1
     ompnum: int = 4
     only_chem: bool = False
+    optimize_lcp: bool = False
     use_cumulant: bool = True
 
     max_space: int = 500
@@ -113,6 +114,7 @@ class BEOPT:
                 self.solver,
                 self.enuc,
                 only_chem=self.only_chem,
+                optimize_lcp=self.optimize_lcp,
                 relax_density=self.relax_density,
                 scratch_dir=self.scratch_dir,
                 solver_args=self.solver_args,
@@ -128,6 +130,7 @@ class BEOPT:
                 self.solver,
                 self.enuc,
                 only_chem=self.only_chem,
+                optimize_lcp=self.optimize_lcp,
                 nproc=self.nproc,
                 ompnum=self.ompnum,
                 relax_density=self.relax_density,

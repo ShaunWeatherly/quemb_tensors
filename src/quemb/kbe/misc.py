@@ -21,7 +21,7 @@ def sgeom(cell, kmesh=None):
     return tools.super_cell(cell, kmesh)
 
 
-def get_phase(cell, kpts, kmesh, wrap_around=False):
+def get_phase(cell, kpts, kmesh, wrap_around):
     """
     Returns the phase in k-space from attributes of the unit cell.
 
@@ -48,6 +48,9 @@ def get_phase(cell, kpts, kmesh, wrap_around=False):
 
 
 def get_phase1(cell, kpts, kmesh):
+    """
+    Deprecated.
+    """
     a_vec = cell.lattice_vectors()
     Ts = cartesian_prod((arange(kmesh[0]), arange(kmesh[1]), arange(kmesh[2])))
     return exp(-1.0j * (Ts @ a_vec @ kpts.T))

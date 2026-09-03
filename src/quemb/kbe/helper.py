@@ -1,4 +1,4 @@
-# Author(s): Oinam Romesh Meitei
+# Author(s): Shaun Weatherly, Oinam Romesh Meitei
 from __future__ import annotations
 
 import numpy as np
@@ -8,84 +8,263 @@ from pyscf import scf
 from quemb.shared.helper import unused
 
 
-def set_fermi(
-    e_kn: np.ndarray,
-    n_electron: int,
-    vbmax: float = -99.0,
-    cbmin: float = 99.0,
-):
-    _cbmin = cbmin
-    _vbmax = vbmax
-    _cbm_kidx = 0
-    _vbm_kidx = 0
-    for kidx, en in enumerate(e_kn):
-        cb_k = en[n_electron // 2]
-        if cb_k < _cbmin:
-            _cbmin = cb_k
-            _cbm_kidx = kidx
-        vb_k = en[n_electron // 2 - 1]
-        if vb_k > _vbmax:
-            _vbmax = vb_k
-            _vbm_kidx = kidx
-    e_kn = [en - _vbmax for en in e_kn]
-    band_summary = {
-        "cbmin": _cbmin,
-        "cbmin_kidx": _cbm_kidx,
-        "vbmax": _vbmax,
-        "vbmax_kidx": _vbm_kidx,
-        "gap": np.abs(_cbmin - _vbmax),
-    }
-
-    return (e_kn, band_summary)
+def pack_block(M, mask):
+    """ """
+    k = 0
+    _M = M[mask]
+    r = np.shape(_M)[0]
+    c = np.shape(_M)[1]
+    v = np.empty((2 * r * c), dtype=np.float64)
+    for i in range(r):
+        for j in range(c):
+            hij = _M[i, j]
+            v[k] = hij.real
+            v[k + 1] = hij.imag
+            k += 2
+    return v
 
 
-def get_bands(
-    hcore: np.ndarray,
-    v_eff: np.ndarray,
-    ovlp: np.ndarray,
-    nkpts_band: int,
-    u_corr: np.ndarray | None = None,
-) -> tuple:
+def unpack_block(v, n, mask, M=None):
+    """ """
+    if M is None:
+        M = np.zeros((n, n), dtype=np.complex128)
+    else:
+        _n, _m = np.shape(M)[0], np.shape(M)[1]
+        assert _n == _m
+        assert _n == n
+
+    k = 0
+    _M = np.zeros_like(M[mask], dtype=np.complex128)
+    r = np.shape(_M)[0]
+    c = np.shape(_M)[1]
+    # Off-diagonal block
+    for i in range(r):
+        for j in range(c):
+            re = v[k]
+            im = v[k + 1]
+            _M[i, j] = re + 1j * im
+            k += 2
+    M[mask] = _M[:, :]
+    # M[nocc:n, :nocc] = _M.conj().T[:,:]
+    return M
+
+
+def pack_block_hermitian(M, nocc):
     """
-    Compute energy bands from an effective one-body Hamiltonian.
-
-    Parameters
-    ----------
-    hcore :
-        True one-body (core) component of the Hamiltonian.
-    v_eff :
-        Effective one-body potential (typically Hartree-Fock).
-    ovlp :
-        Atomic orbital overlap matrix (S_ij).
-    nkpts_band :
-        Integer number of k-points in the band path.
-    u_corr :
-        Effective one-body correlation potential.
-
-    Returns
-    -------
-    mo_energy : (nmo,) ndarray or a list of (nmo,) ndarray
-        Bands energies E_n(k)
-    mo_coeff : (nao, nmo) ndarray or a list of (nao,nmo) ndarray
-        Band orbitals psi_n(k)
+    Packs the occupied-virtual block of M into a real vector of length:
+        2 * (nocc * nvir)
     """
-    fock = hcore + v_eff
-    if u_corr is not None:
-        fock = fock + u_corr
-    eig_kpts = []
-    mo_coeff_kpts = []
-    for k in range(0, nkpts_band):
-        s, U = np.linalg.eigh(ovlp[k])
-        X = U @ np.diag(s ** (-0.50))
-        F = X.T.conj() @ (fock[k] @ X)
-        eigs, vecs = np.linalg.eigh(F, UPLO="U")
-        idx = np.argmax(abs(vecs.real), axis=0)
-        C_mo = np.dot(X, vecs)
-        C_mo[:, C_mo[idx, np.arange(len(eigs))].real < 0] *= -1
-        eig_kpts.append(eigs)
-        mo_coeff_kpts.append(C_mo)
+    n = M.shape[0]  # Assumes (n x n)
+    k = 0
+    nvir = n - nocc
+    _M = M[:nocc, nocc:n]
+    v = np.empty((2 * nocc * nvir), dtype=np.float64)
+    for i in range(nocc):
+        for j in range(nvir):
+            hij = _M[i, j]
+            v[k] = hij.real
+            v[k + 1] = hij.imag
+            k += 2
+    return v
 
-    return (eig_kpts, mo_coeff_kpts)
+
+def unpack_block_hermitian(v, n, nocc, M=None):
+    """
+    Rebuild Hermitian matrix from packed occupied-virtual block.
+    """
+    if M is None:
+        M = np.zeros((n, n), dtype=np.complex128)
+    else:
+        _n, _m = np.shape(M)[0], np.shape(M)[1]
+        assert _n == _m
+        assert _n == n
+
+    k = 0
+    nvir = n - nocc
+    _M = np.zeros((nocc, nvir), dtype=np.complex128)
+
+    # Off-diagonal block
+    for i in range(nocc):
+        for j in range(nvir):
+            re = v[k]
+            im = v[k + 1]
+            _M[i, j] = re + 1j * im
+            k += 2
+    M[:nocc, nocc:n] = _M[:, :]
+    M[nocc:n, :nocc] = _M.conj().T[:, :]
+    return M
+
+
+# def pack_block_nonhermitian(M, nocc):
+#     return None
+
+
+# def unpack_block_nonhermitian(v, n, nocc):
+#     return None
+
+
+def pack_triu_hermitian(M, *args):
+    """
+    Packs an n×n Hermitian matrix into a real vector of length:
+        n + 2 * (n*(n-1)//2)
+    Order:
+      - First n diagonal entries, H_ii (purely real)
+      - Then (for i<j): Re(H_ij) -> Im(H_ij)
+    """
+    unused(args)
+    n = M.shape[0]
+    k = 0
+    v = np.empty((n * (n - 1)), dtype=np.float64)  # = 2*(n*(n-1)/2)
+    # Upper triangle (complex)
+    for i in range(n):
+        for j in range(i + 1, n):
+            hij = M[i, j]
+            v[k] = hij.real
+            v[k + 1] = hij.imag
+            k += 2
+    return v
+
+
+def pack_hermitian(M, *args):
+    """
+    Packs an n×n Hermitian matrix into a real vector of length:
+        n + 2 * (n*(n-1)//2)
+    Order:
+      - First n diagonal entries, H_ii (purely real)
+      - Then (for i<j): Re(H_ij) -> Im(H_ij)
+    """
+    unused(args)
+    n = M.shape[0]
+    k = 0
+    v = np.empty(n + (n * (n - 1)), dtype=np.float64)  # = n + 2*(n*(n-1)/2)
+    # Diagonal (real)
+    for i in range(n):
+        v[k] = M[i, i].real
+        k += 1
+    # Upper triangle (complex)
+    for i in range(n):
+        for j in range(i + 1, n):
+            hij = M[i, j]
+            v[k] = hij.real
+            v[k + 1] = hij.imag
+            k += 2
+    return v
+
+
+def unpack_triu_hermitian(v, n, *args):
+    """
+    Rebuild Hermitian matrix from packed representation.
+    """
+    unused(args)
+    M = np.zeros((n, n), dtype=np.complex128)
+    k = 0
+
+    # Hermitian off-diagonals
+    for i in range(n):
+        for j in range(i + 1, n):
+            re = v[k]
+            im = v[k + 1]
+            M[i, j] = re + 1j * im
+            M[j, i] = re - 1j * im
+            k += 2
+
+    return M
+
+
+def unpack_hermitian(v, n, *args):
+    """
+    Rebuild Hermitian matrix from packed representation.
+    """
+    unused(args)
+    M = np.zeros((n, n), dtype=np.complex128)
+    k = 0
+
+    # Unpack hermitian
+    for i in range(n):
+        M[i, i] = v[k] + 0.0j
+        k += 1
+
+    # Off-diagonal
+    for i in range(n):
+        for j in range(i + 1, n):
+            re = v[k]
+            im = v[k + 1]
+            M[i, j] = re + 1j * im
+            M[j, i] = re - 1j * im
+            k += 2
+
+    return M
+
+
+def pack_nonhermitian(M, *args):
+    """
+    Packs an n×n square matrix into a real vector of length:
+        2 * (n + n*(n-1))
+    (i.e., exactly twice the length of the packed Hermitian vector)
+    Order:
+      - Re(H_ii) -> Im(H_ii) for all 'n' diagonals
+      - Then (for i<j): Re(H_ij) -> Im(H_ij) -> Re(H_ji) -> Im(H_ji)
+    """
+    unused(args)
+    n = M.shape[0]
+    v = np.empty(2 * (n + (n * (n - 1))), dtype=np.float64)
+    k = 0
+
+    # Diagonal (complex)
+    for i in range(n):
+        v[k] = M[i, i].real
+        v[k + 1] = M[i, i].imag
+        k += 2
+    # Upper and Lower Triangles
+    for i in range(n):
+        for j in range(i + 1, n):
+            hij = M[i, j]
+            hji = M[j, i]
+            v[k] = hij.real
+            v[k + 1] = hij.imag
+            v[k + 2] = hji.real
+            v[k + 3] = hji.imag
+            k += 4
+
+    return v
+
+
+def block_split(M, nrows, ncols=None):
+    """
+    Split a matrix into sub-matrices.
+    """
+    if ncols is None:
+        ncols = nrows
+    r, h = M.shape
+    return (
+        M.reshape(h // nrows, nrows, -1, ncols).swapaxes(1, 2).reshape(-1, nrows, ncols)
+    )
+
+
+def unpack_nonhermitian(v, n, *args):
+    """
+    Rebuild square matrix from packed representation.
+    """
+    unused(args)
+    M = np.zeros((n, n), dtype=np.complex128)
+    k = 0
+
+    # Diagonal
+    if len(v) == 2 * (n + (n * (n - 1))):
+        for i in range(n):
+            M[i, i] = v[k] + v[k + 1] * 1j
+            k += 2
+
+    # Off-diagonal
+    for i in range(n):
+        for j in range(i + 1, n):
+            # re = v[k]
+            # im = v[k + 1]
+            M[i, j] = v[k] + 1j * v[k + 1]
+            M[j, i] = v[k + 2] + 1j * v[k + 3]
+            k += 4
+
+    return M
 
 
 def get_veff(eri_, dm, S, TA, hf_veff, return_veff0=False):
@@ -139,3 +318,38 @@ def get_veff(eri_, dm, S, TA, hf_veff, return_veff0=False):
         return (Veff0, Veff)
 
     return Veff
+
+
+def unwrap_n_tensor(arr):
+    _dims = np.shape(arr)
+    if len(_dims) == 2:
+        # Good to go, do nothing.
+        pass
+    elif len(_dims) == 3:
+        # Assume broadcasting over the first index to flatten
+        # a 3-D array into 2-dimensions.
+        arr = unwrap_3_tensor(arr)
+    elif len(_dims) == 4:
+        # Simply reshape into a 2-dimensional array.
+        arr = unwrap_4_tensor(arr)
+    elif len(_dims) >= 5:
+        raise SystemExit("Can't unwrap n-tensors for `n>=5`!")
+    r_a = np.real(arr)
+    # i_arr = np.imag(arr)
+    return r_a
+
+
+def unwrap_3_tensor(arr):
+    # Assume broadcasting over the first index.
+    _dims = np.shape(arr)
+    _arr = np.zeros((_dims[0] * _dims[1], _dims[0] * _dims[2]), dtype=arr.dtype)
+    for i in range(_dims[0]):
+        _ofs = (i * _dims[1], i * _dims[2])
+        _arr[_ofs[0] : _ofs[0] + _dims[1], _ofs[1] : _ofs[1] + _dims[2]] = arr[i][:, :]
+    return _arr
+
+
+def unwrap_4_tensor(arr):
+    _dims = np.shape(arr)
+    _arr = np.reshape(arr, (_dims[0] * _dims[1], _dims[2] * _dims[3]), order="C")
+    return _arr
