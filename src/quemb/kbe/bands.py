@@ -1349,7 +1349,7 @@ class HOEPOptimizer:
             "spec": spec,
             "gamma": gamma,
             "residual": residual,
-            "cost": cost,
+            "cost": cost.real,
             "mu": spec["mu"],
             "beta": beta,
         }
@@ -1362,7 +1362,7 @@ class HOEPOptimizer:
             out = self.evaluate_from_blocks(self.H_A, self.H_B, Ared, Bred, log_beta)
         else:
             raise ValueError("sector must be 'H' or 'AH'")
-        return float(out["cost"])
+        return out["cost"]
 
     def _tangent_block_operator(
         self, deltaAred: np.ndarray, deltaBred: np.ndarray, sector: str
@@ -1758,7 +1758,7 @@ class HOEPOptimizer:
             )
             if self.verbose:
                 print(
-                    f"Cycle {cyc + 1}: cost={out['cost']:.8e},",
+                    f"Cycle {cyc + 1}: cost={out['cost'].real:.8e},",
                     f"N_eff={history[-1]['N_eff']:.6f}, beta={history[-1]['beta']:.6f}",
                 )
         return history
@@ -1794,7 +1794,7 @@ class HOEPOptimizer:
         )
         if self.verbose:
             print(
-                f"Complex Opt: cost={out['cost']:.8e},",
+                f"Complex Opt: cost={out['cost'].real:.8e},",
                 f"N_eff={history[-1]['N_eff']:.6f},",
                 f"beta={history[-1]['beta']:.6f}",
             )
@@ -1806,8 +1806,8 @@ class HOEPOptimizer:
         )
 
     def annealing_callback(self, x, f, context):
+        unused(x)
         print(
             f"Annealing Iter. {self.global_iter}: e_val={f:0.3E} (Context: {context})"
         )
-        print(f" -x_val: {x}")
         self.global_iter += 1
