@@ -1,26 +1,6 @@
 """
-h_oep_poc.py
-
 Proof-of-concept implementation of a holomorphic optimized effective potential
 (h-OEP) fit to a correlated, non-idempotent target 1RDM in a non-orthogonal AO basis.
-
-Features
---------
-- Non-orthogonal AO basis with user-provided overlap matrix S
-- Zeroth-order RHF Fock matrix as input
-- Auxiliary finite-temperature Fermi-Dirac occupations
-- beta and mu included as optimization variables
-- Low-rank nonlocal factorized ansatz, initialized from leading singular vectors
-  of the RHF/target 1RDM mismatch
-- Hermitian and anti-Hermitian sectors optimized by alternating block optimization
-- Frobenius-norm cost
-- Analytic parameter gradients built from the 1RDM density response
-- scipy.optimize.dual_annealing with L-BFGS-B local minimizer
-- Optional soft penalties for:
-    * particle number
-    * parity   (placeholder)
-    * time-reversal (placeholder / simple default)
-- Optional L2 regularization of the anti-Hermitian sector
 
 Notes
 -----
@@ -30,15 +10,6 @@ Notes
 3. The target 1RDM is assumed to be supplied in the same AO representation as the input
    Fock matrix, using the convention N = Tr(gamma @ S).
 4. The parity/time-reversal constraints are currently placeholders.
-
-Dependencies
-------------
-numpy, scipy
-
-Example
--------
-Run this file directly:
-    python h_oep_poc.py
 """
 
 from __future__ import annotations
@@ -1098,12 +1069,16 @@ class HOEPOptimizer:
                 @ self.s
                 @ self.VR
             )
+            _init_AH_A = 1.0j * _init_H_A
         else:
-            _init_H_A = self.UL.conj().T @ self.s @ hoep0 @ self.s @ self.VR
+            _init_H_A = self.UL.conj().T @ self.s @ symm(hoep0) @ self.s @ self.VR
+            _init_AH_A = (
+                self.UL.conj().T @ self.s @ (hoep0 - symm(hoep0)) @ self.s @ self.VR
+            )
         self.H_A = np.array(_init_H_A, dtype=np.complex128)
+        self.AH_A = np.array(_init_AH_A, dtype=np.complex128)
         self.H_B = np.eye(self.r, dtype=np.complex128)
-        self.AH_A = 1.0j * self.H_A
-        self.AH_B = 1.0j * self.H_B
+        self.AH_B = np.eye(self.r, dtype=np.complex128)
 
         # Global spectral variables
         self.mu = ref["mu"]
